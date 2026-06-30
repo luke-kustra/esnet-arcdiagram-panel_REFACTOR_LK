@@ -1,47 +1,82 @@
+// [refactor] Substantial changes in this file during the modernization refactor:
+//  - props are typed via the `ArcProps` interface (was `props: any`);
+//  - the module-level mutable `toolTip` singleton was replaced with component `useState`
+//    (it previously leaked across every panel instance on the page);
+//  - the global `localStorage("this")` first-render flag was replaced with a per-instance
+//    `wasInViewRef` and moved into the effect (see comments below);
+//  - the `==` highlighting comparisons were fixed to `Number(...) === ...` (a DOM id string
+//    vs a numeric source — see comments at those sites);
+//  - the tooltip inner lines now use `tooltipFontSize` instead of an undefined `props.zoom`.
+// D3 selection callbacks (d/l/n) are intentionally left `any` (the D3 interop boundary).
 import React, { useEffect, useRef, useState, ReactNode } from 'react';
 import * as d3 from 'd3';
+import { PanelData } from '@grafana/data';
 import { idToName, getNodeTargets, linSpace, resetLabel, replaceEllipsis, evaluateQuery, handleZoom, getQueryMatches, calcBottomOffset } from 'utils';
 import '../styles.css'
 import { styles } from 'styles'
+import { Link, Node, ParsedData, SimpleOptions } from 'types';
 import { locationService } from '@grafana/runtime';
-let toolTip = {
-  source: "",
-  target: <p></p> as ReactNode,
-  field: <p></p> as ReactNode,
-  pos: [0,0]
+
+interface ArcProps {
+  textColor: string;
+  parsedData: ParsedData;
+  graphOptions: SimpleOptions;
+  width: number;
+  height: number;
+  query: string;
+  isDarkMode: boolean;
+  panelId: number;
+  zoomState: number;
+  data: PanelData;
 }
 
-function Arc(props: any) {
-  let isEdit = locationService.getSearchObject().editPanel !== undefined;
-  let firstRender = false;
+interface ToolTipState {
+  source: string;
+  target: ReactNode;
+  field: ReactNode;
+  pos: number[];
+}
 
-    if(!isEdit) {
-      localStorage.setItem("this", "true")
-    }
+// [refactor] Stylistic: named constant for the previously-inlined Grafana panel title height.
+const PANEL_TITLE_HEIGHT = 31.99;
 
-    if(localStorage.getItem("this") ===  "true" && isEdit) {
-      firstRender = true;
-    }
-    
-    if(isEdit){
-      localStorage.setItem("this", "false")
-    }
+function Arc(props: ArcProps) {
+  // [refactor] Tracks whether the previous render was in view mode, so the effect can detect the
+  // first render after switching into edit mode. Scoped to this instance via a ref (previously a
+  // global localStorage("this") flag that leaked state across panels/tabs). It is only
+  // read/written inside the effect, never during render.
+  const wasInViewRef = useRef(true);
 
-  
-  let uniqueNodes = props.parsedData.uniqueNodes;
-  let links = props.parsedData.links;
+  const uniqueNodes: Node[] = props.parsedData.uniqueNodes;
+  const links: Link[] = props.parsedData.links;
   const containerRef = useRef(null),
   gRef = useRef(null),
   labelRef = useRef(null),
   tooltipRef = useRef(null);
   const [showTooltip, setShowTooltip] = useState(false)
 
+  // [refactor] Tooltip content, scoped to this component instance via state (previously a
+  // module-level singleton shared across every panel on the page).
+  const [toolTip, setToolTip] = useState<ToolTipState>({
+    source: "",
+    target: <p></p>,
+    field: <p></p>,
+    pos: [0, 0]
+  });
+
   const handleToggleTooltip = (isActive: boolean) => {
     setShowTooltip(isActive);
   }
 
-  function updateTooltip(pos: number[], isActive: boolean, sourceId: number,  targetId?: number, displayValue?: string, linkId?: number): void {
-    
+  // [refactor] Stylistic: dropped the unused `displayValue` and `linkId` params.
+  function updateTooltip(pos: number[], isActive: boolean, sourceId: number,  targetId?: number): void {
+    const toolTip: ToolTipState = {
+      source: "",
+      target: <p></p>,
+      field: <p></p>,
+      pos
+    };
+
     // when only sourceId is passed, display node and its targets
     if(targetId === undefined) {
       toolTip.source = idToName(sourceId,uniqueNodes)
@@ -52,7 +87,8 @@ function Arc(props: any) {
                         .map((id) => idToName(id, uniqueNodes))
                         .filter((value, index, array) => array.indexOf(value) === index)
                         .map((string, index) => (
-                          <p style={styles.toolTipStyle.text(props.zoom)} key={index}>
+                          // [refactor] Bug fix: was `props.zoom` (an undefined prop) -> tooltipFontSize
+                          <p style={styles.toolTipStyle.text(props.graphOptions.tooltipFontSize)} key={index}>
                             {string}
                             <br />
                           </p>
@@ -70,12 +106,13 @@ function Arc(props: any) {
     } else {
       toolTip.source = idToName(sourceId,uniqueNodes)
       toolTip.target = idToName(targetId,uniqueNodes)
-     
+
       const hoverLink = (links.find((item: { source: any; target: any; }) => item.source === sourceId && item.target === targetId))
-      toolTip.field = props.parsedData.fields.map((field: any, index: number) => (    
+      toolTip.field = props.parsedData.fields.map((field: any, index: number) => (
                         <p key={index}><b style={styles.toolTipStyle.preface}>{field.displayName}:</b>
-                        {hoverLink[`${field.field}Display`].map((string: any, index: number) => (
-                              <p style={styles.toolTipStyle.text(props.zoom)} key={index}>
+                        {hoverLink![`${field.field}Display`].map((string: any, index: number) => (
+                              // [refactor] Bug fix: was `props.zoom` (an undefined prop) -> tooltipFontSize
+                              <p style={styles.toolTipStyle.text(props.graphOptions.tooltipFontSize)} key={index}>
                                 {string}
                                 <br />
                               </p>
@@ -84,8 +121,9 @@ function Arc(props: any) {
                         </p>
                       ))
     }
-   
-    // toggle tooltip
+
+    // commit content and toggle tooltip
+    setToolTip(toolTip)
     handleToggleTooltip(isActive)
 
     // update position
@@ -94,29 +132,29 @@ function Arc(props: any) {
       const mapBounds = panelContainer.getBoundingClientRect();
       let offsetY = pos[1] - mapBounds.top,
       offsetX = pos[0] - mapBounds.left
-      
+
       const toolTipDom = document.querySelectorAll("#tooltip")[0] as HTMLElement,
       toolTipBounds = toolTipDom.getBoundingClientRect();
-      
+
       let leftOrRight = "left";
       if(offsetX + toolTipBounds.right > mapBounds.right) {
         leftOrRight = "right";
         offsetX = mapBounds.right - pos[0]
       }
-    
-      let topOrBottom = "top" 
-      // add margin of 31.99px
-      if(toolTipBounds.height+pos[1]+31.99 > mapBounds.bottom) {
+
+      let topOrBottom = "top"
+      // add margin of the panel title height
+      if(toolTipBounds.height+pos[1]+PANEL_TITLE_HEIGHT > mapBounds.bottom) {
         topOrBottom = "bottom";
         offsetY = mapBounds.bottom - pos[1]
       }
-    
+
       if (topOrBottom === "top") {
         toolTipDom.style.top = `${offsetY}px`;
       } else {
         toolTipDom.style.bottom = `${offsetY}px`;
       }
-      
+
       if (leftOrRight === "left") {
         toolTipDom.style.left = `${offsetX}px`;
       } else {
@@ -127,9 +165,24 @@ function Arc(props: any) {
 
   useEffect(() => {
 
+    // [refactor] Detect the first render after switching from view mode into edit mode. Mutating
+    // the ref here (inside the effect) is safe; the effect re-runs on the view->edit transition
+    // because the panel's width/height change when it enters the editor.
+    const isEdit = locationService.getSearchObject().editPanel !== undefined;
+    let firstRender = false;
+    if (!isEdit) {
+      wasInViewRef.current = true;
+    }
+    if (wasInViewRef.current && isEdit) {
+      firstRender = true;
+    }
+    if (isEdit) {
+      wasInViewRef.current = false;
+    }
+
     // removes the graph if it exists in the dom so it gets rendered with updated dimensions
     d3.selectAll(`[data-panelid="${props.panelId}"] circle, [data-panelid="${props.panelId}"] path, [data-panelid="${props.panelId}"] text`).remove();
-    
+
 
     const width = props.width,
     height = props.height
@@ -147,21 +200,21 @@ function Arc(props: any) {
       .enter()
       .append("text")
       // if node has large radius, offset the label for readability
-      .attr("x", (d: any) => { return uniqueNodes.find((e: { id: any; }) => e.id === d.id).radius >= 7 ? -(uniqueNodes.find((e: { id: any; }) => e.id === d.id).radius*1.6) : -10 })
-      .attr("y", (d: any) => { return uniqueNodes.find((e: { id: any; }) => e.id === d.id).radius >= 7 ? (uniqueNodes.find((e: { id: any; }) => e.id === d.id).radius*0.8) : 10 })
-      .text((d, i) => uniqueNodes[i].name)
+      .attr("x", (d: any) => { return uniqueNodes.find((e: { id: any; }) => e.id === d.id)!.radius >= 7 ? -(uniqueNodes.find((e: { id: any; }) => e.id === d.id)!.radius*1.6) : -10 })
+      .attr("y", (d: any) => { return uniqueNodes.find((e: { id: any; }) => e.id === d.id)!.radius >= 7 ? (uniqueNodes.find((e: { id: any; }) => e.id === d.id)!.radius*0.8) : 10 })
+      .text((d, i) => uniqueNodes[i].name as string)
       .style("text-anchor", "end")
       .attr('fill', () => {return props.isDarkMode ? "white" : "black"})
       .attr('font-size', props.graphOptions.fontSize)
       .attr('transform', (d, i) => ("translate(" + 0 + "," + (height) + ")rotate(-45)"))
       .style("margin-right", "5px")
-      .attr('name', (d, i) => { return uniqueNodes[i].name })
+      .attr('name', (d, i) => { return uniqueNodes[i].name as string })
       .attr('id', (d, i) => { return i })
 
 
     // get array of equally spaced values for positioning of graph on x axis
     let values = linSpace(props.graphOptions.marginLeft, width-props.graphOptions.marginRight, uniqueNodes.length);
-    
+
     let labelsAsHtml = document.querySelectorAll(`[data-panelid="${props.panelId}"] text`)
 
     let offsetBottom = calcBottomOffset(labelsAsHtml)
@@ -172,12 +225,12 @@ function Arc(props: any) {
           return (
             "translate(" + values[i] + "," + (height-offsetBottom) + ")rotate(-45)")
       })
-      
+
     // check if label is out of bounds
     Array.from(labelsAsHtml).forEach(element => {
       replaceEllipsis(element, false)
     });
-    
+
     // render nodes
     const svg = d3.select(container)
     .selectAll(`[data-panelid="${props.panelId}"] circle`)
@@ -193,7 +246,7 @@ function Arc(props: any) {
       .attr("r", (n: any) => { return  n?.radius })
       .style("fill", (d, i) => uniqueNodes[i].color)
       .attr("id", (d, i) => uniqueNodes[i].id)
-      .attr("name", (d, i) => uniqueNodes[i].name)
+      .attr("name", (d, i) => uniqueNodes[i].name as string)
       .attr("radius", (d, i) => uniqueNodes[i].radius);
 
     // render links
@@ -205,13 +258,13 @@ function Arc(props: any) {
       .enter()
       .append('path')
       .attr('d', function (d, i) {
-        const start = values[links[i].source]
-        const end = values[links[i].target]
+        const start = values[links[i].source!]
+        const end = values[links[i].target!]
 
         const radiusX = Math.abs(start - end) / 2; // X-axis radius
         let radiusY = radiusX * props.graphOptions.arcHeight; // Y-axis radius, multiply with linkHeight to get elliptical shape
         if(props.graphOptions.hopMode) {
-          if(links[i].isOverlap) { radiusY = radiusX * links[i].mapRadiusY }
+          if(links[i].isOverlap) { radiusY = radiusX * links[i].mapRadiusY! }
         }
         const largeArcFlag = Math.abs(start - end) > Math.PI ? 1 : 0; // Determines whether the arc should be greater than or less than 180 degrees
         return [
@@ -222,14 +275,14 @@ function Arc(props: any) {
       })
       .style("fill", "none")
       .attr("stroke", (l: any) => { return  l?.color })
-      .attr("id", (d, i) => links[i].id)
+      .attr("id", (d, i) => links[i].id!)
       .attr("stroke-width", (l: any) => { return  l?.strokeWidth })
       .style("opacity", props.graphOptions.arcOpacity)
-      .attr("source", (d, i) => links[i].source)
-      .attr("target", (d, i) => links[i].target)
-      .attr("sum", (d, i) => links[i].sum)
-      .attr("displayValue", (d, i) => links[i].displayValue)
-      .attr("path", (d, i) => links[i].path)
+      .attr("source", (d, i) => links[i].source!)
+      .attr("target", (d, i) => links[i].target!)
+      .attr("sum", (d, i) => links[i].sum!)
+      .attr("displayValue", (d, i) => links[i].displayValue!)
+      .attr("path", (d, i) => links[i].pathIndex!)
 
     let nodes = d3.selectAll(`[data-panelid="${props.panelId}"] circle`)
     let paths = d3.selectAll(`[data-panelid="${props.panelId}"] path`)
@@ -240,7 +293,7 @@ function Arc(props: any) {
     const queryMatches = getQueryMatches(props.query, uniqueNodes)
 
     function highlighting() {
-      /********************************** Highlighting **********************************/ 
+      /********************************** Highlighting **********************************/
 
       if(firstRender) {
         nodes = d3.selectAll(`[data-panelid="${props.panelId}"] circle`)
@@ -266,7 +319,7 @@ function Arc(props: any) {
               } else {
                 return nodeTargets.includes(n.id) ? 1 : 0.1
               }
-              
+
             })
             .transition()
             .attr("r", (n: any) => {
@@ -274,7 +327,7 @@ function Arc(props: any) {
                 return uniqueNodes[n.id].radius
               } else {
                 return nodeTargets.includes(n.id) ? uniqueNodes[n.id].radius*2 : uniqueNodes[n.id].radius
-              }  
+              }
             })
             .duration(duration)
           d3.select(this)
@@ -284,17 +337,18 @@ function Arc(props: any) {
             .attr("r", uniqueNodes[d.srcElement.id].radius*2)
           paths
             .transition()
+            // [refactor] eqeqeq fix: the DOM id is a string and l.source is a number, so the
+            // old `d.srcElement.id == l?.source` relied on loose equality. Wrapped in Number()
+            // so strict `===` preserves the original matching behavior.
             .style('opacity', (l: any) => {
               if(isQuery) {
                 return queryMatches.has(l.source) || queryMatches.has(l.target) ? props.graphOptions.arcOpacity : .1
               } else {
-                /* eslint-disable eqeqeq */
-                return d.srcElement.id == l?.source || d.srcElement.id == l?.target ? props.graphOptions.arcOpacity : .1
-              }  
+                return Number(d.srcElement.id) === l?.source || Number(d.srcElement.id) === l?.target ? props.graphOptions.arcOpacity : .1
+              }
             })
             .attr('stroke-width', (l: any) => {
-              /* eslint-disable eqeqeq */
-              return d.srcElement.id == l?.source || d.srcElement.id == l?.target ? l?.strokeWidth*2 : l?.strokeWidth
+              return Number(d.srcElement.id) === l?.source || Number(d.srcElement.id) === l?.target ? l?.strokeWidth*2 : l?.strokeWidth
             })
             .duration(duration)
           labels
@@ -367,25 +421,25 @@ function Arc(props: any) {
         })
     }
     highlighting()
-    
+
     function toolTip() {
-      /********************************** Link tooltip **********************************/ 
+      /********************************** Link tooltip **********************************/
 
       if(firstRender) {
         nodes = d3.selectAll(`[data-panelid="${props.panelId}"] circle`)
         paths = d3.selectAll(`[data-panelid="${props.panelId}"] path`)
         labels = d3.selectAll(`[data-panelid="${props.panelId}"] text`)
       }
-      
+
       paths
       .on("mouseover", function (d) {
-        updateTooltip([d.clientX,d.clientY], true, Number(d.srcElement.getAttribute("source")), Number(d.srcElement.getAttribute("target")), d.srcElement.getAttribute("displayValue"), d.srcElement.id);
+        updateTooltip([d.clientX,d.clientY], true, Number(d.srcElement.getAttribute("source")), Number(d.srcElement.getAttribute("target")));
         paths
           .style("opacity",(l: any) => {
             if(isQuery) {
               return queryMatches.has(l.source) || queryMatches.has(l.target) ? props.graphOptions.arcOpacity : .1
             } else if (props.graphOptions.hopMode) {
-              return Number(d.srcElement.getAttribute("path")) === l.path ? props.graphOptions.arcOpacity : .1
+              return Number(d.srcElement.getAttribute("path")) === l.pathIndex ? props.graphOptions.arcOpacity : .1
             } else {
               return .1
             }
@@ -394,7 +448,7 @@ function Arc(props: any) {
           .duration(duration)
         d3.select(this)
           .transition()
-          .style("opacity", props.graphOptions.arcOpacity) 
+          .style("opacity", props.graphOptions.arcOpacity)
           .duration(duration)
       })
       .on('mouseout', function (d) {
@@ -425,11 +479,11 @@ function Arc(props: any) {
           .attr('stroke-width', (l: any) => {
             return l?.strokeWidth
           })
-      })    
+      })
     }
 
     toolTip()
-      
+
 
     if(props.graphOptions.search && isQuery) {evaluateQuery(props.query,uniqueNodes, labels, paths, nodes, props.graphOptions.arcOpacity)}
 
@@ -448,15 +502,15 @@ function Arc(props: any) {
           .enter()
           .append("text")
           // if node has large radius, offset the label for readability
-          .attr("x", (d: any) => { return uniqueNodes.find((e: { id: any; }) => e.id === d.id).radius >= 7 ? -(uniqueNodes.find((e: { id: any; }) => e.id === d.id).radius*1.6) : -10 })
-          .attr("y", (d: any) => { return uniqueNodes.find((e: { id: any; }) => e.id === d.id).radius >= 7 ? (uniqueNodes.find((e: { id: any; }) => e.id === d.id).radius*0.8) : 10 })
-          .text((d, i) => uniqueNodes[i].name)
+          .attr("x", (d: any) => { return uniqueNodes.find((e: { id: any; }) => e.id === d.id)!.radius >= 7 ? -(uniqueNodes.find((e: { id: any; }) => e.id === d.id)!.radius*1.6) : -10 })
+          .attr("y", (d: any) => { return uniqueNodes.find((e: { id: any; }) => e.id === d.id)!.radius >= 7 ? (uniqueNodes.find((e: { id: any; }) => e.id === d.id)!.radius*0.8) : 10 })
+          .text((d, i) => uniqueNodes[i].name as string)
           .style("text-anchor", "end")
           .attr('fill', () => {return props.isDarkMode ? "white" : "black"})
           .attr('font-size', props.graphOptions.fontSize)
           .attr('transform', (d, i) => ("translate(" + 0 + "," + (height) + ")rotate(-45)"))
           .style("margin-right", "5px")
-          .attr('name', (d, i) => { return uniqueNodes[i].name })
+          .attr('name', (d, i) => { return uniqueNodes[i].name as string })
           .attr('id', (d, i) => { return i })
 
         labelsAsHtml = document.querySelectorAll(`[data-panelid="${props.panelId}"] text`)
@@ -491,10 +545,10 @@ function Arc(props: any) {
           .attr("r", (n: any) => { return  n?.radius })
           .style("fill", (d, i) => uniqueNodes[i].color)
           .attr("id", (d, i) => uniqueNodes[i].id)
-          .attr("name", (d, i) => uniqueNodes[i].name)
+          .attr("name", (d, i) => uniqueNodes[i].name as string)
           .attr("radius", (d, i) => uniqueNodes[i].radius);
 
-        
+
 
         const g = d3.select(graph)
         .selectAll(`[data-panelid="${props.panelId}"] path`)
@@ -504,13 +558,13 @@ function Arc(props: any) {
           .enter()
           .append('path')
           .attr('d', function (d, i) {
-            const start = values[links[i].source]
-            const end = values[links[i].target]
+            const start = values[links[i].source!]
+            const end = values[links[i].target!]
 
             const radiusX = Math.abs(start - end) / 2; // X-axis radius
             let radiusY = radiusX * props.graphOptions.arcHeight; // Y-axis radius, multiply with linkHeight to get elliptical shape
             if(props.graphOptions.hopMode) {
-              if(links[i].isOverlap) { radiusY = radiusX * links[i].mapRadiusY }
+              if(links[i].isOverlap) { radiusY = radiusX * links[i].mapRadiusY! }
             }
             const largeArcFlag = Math.abs(start - end) > Math.PI ? 1 : 0; // Determines whether the arc should be greater than or less than 180 degrees
             return [
@@ -521,16 +575,16 @@ function Arc(props: any) {
           })
           .style("fill", "none")
           .attr("stroke", (l: any) => { return  l?.color })
-          .attr("id", (d, i) => links[i].id)
+          .attr("id", (d, i) => links[i].id!)
           .attr("stroke-width", (l: any) => { return  l?.strokeWidth })
           .style("opacity", props.graphOptions.arcOpacity)
-          .attr("source", (d, i) => links[i].source)
-          .attr("target", (d, i) => links[i].target)
-          .attr("sum", (d, i) => links[i].sum)
-          .attr("displayValue", (d, i) => links[i].displayValue)
-          .attr("path", (d, i) => links[i].path)
+          .attr("source", (d, i) => links[i].source!)
+          .attr("target", (d, i) => links[i].target!)
+          .attr("sum", (d, i) => links[i].sum!)
+          .attr("displayValue", (d, i) => links[i].displayValue!)
+          .attr("path", (d, i) => links[i].pathIndex!)
 
-          
+
 
           toolTip()
 
@@ -544,16 +598,16 @@ function Arc(props: any) {
   if(document.querySelectorAll(`[data-panelid="${props.panelId}"] #canvas`)[0] !== undefined) {
     handleZoom(document.querySelectorAll(`[data-panelid="${props.panelId}"] #canvas`)[0] as HTMLElement, props.zoomState)
   }
-  
-  return (       
+
+  return (
       <div style={styles.containerStyle}>
-        <div id={"canvas"} style={styles.containerStyle} > 
+        <div id={"canvas"} style={styles.containerStyle} >
           <svg style={styles.containerStyle} ref = {containerRef}>
             <g style={styles.containerStyle} ref = {gRef}></g>
             <svg style={styles.labelStyle} ref = {labelRef}></svg>
           </svg>
 
-        </div> 
+        </div>
         {showTooltip && (
           <div ref={tooltipRef} style={styles.toolTipStyle.box} id='tooltip'>
             <p style={styles.toolTipStyle.text(props.graphOptions.tooltipFontSize)} ><b style={styles.toolTipStyle.preface}>{props.graphOptions.toolTipSource}</b> {" "}{toolTip.source}</p>
@@ -563,11 +617,9 @@ function Arc(props: any) {
             <p style={styles.toolTipStyle.text(props.graphOptions.tooltipFontSize)} > {toolTip.field}</p>
           </div>
         )}
-      </div>      
+      </div>
   );
 }
 
 
 export default Arc;
-
-

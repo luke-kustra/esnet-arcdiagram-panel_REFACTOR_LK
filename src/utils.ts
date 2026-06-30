@@ -2,9 +2,12 @@
 A collection of utility functions
 */
 
+import { FieldDisplayName } from 'types';
+
 // find string by id
 export function idToName(id: number, dic: any[]): string {
-    return dic.find( (obj: any) => obj.id === id).name
+    // [refactor] Bug fix: guard the lookup so an unmatched id returns "" instead of throwing.
+    return dic.find( (obj: any) => obj.id === id)?.name ?? ""
 }
 
 // get array of targets for node
@@ -25,7 +28,10 @@ export function mapToLogRange(value: number, rangeMin: number, rangeMax: number,
 
     const logValue = Math.log10(value);
     const mappedValue = ((logValue - logMinValue) * factor) + rangeMin;
-    return mappedValue;
+    // [refactor] Bug fix: when all sums are equal (logRange === 0) or a sum is <= 0
+    // (log10 -> -Infinity/NaN), the result is non-finite; fall back to the range minimum so the
+    // element still renders instead of disappearing.
+    return Number.isFinite(mappedValue) ? mappedValue : rangeMin;
 }
 
 export function mapToLinRange(value: number, rangeMin: number, rangeMax: number,  minLinkSum: number, maxLinkSum: number) {
@@ -34,7 +40,9 @@ export function mapToLinRange(value: number, rangeMin: number, rangeMax: number,
 
     const scaledValue = (value - minLinkSum) / inputRange;
     const mappedValue = scaledValue * outputRange + rangeMin;
-    return mappedValue;
+    // [refactor] Bug fix: when all values are equal (inputRange === 0) the division yields
+    // NaN/Infinity; fall back to the range minimum so elements still render.
+    return Number.isFinite(mappedValue) ? mappedValue : rangeMin;
 }
 
 // get an array of evenly spaced colors
@@ -75,7 +83,8 @@ export function calcStrokeWidth(arcFromSource: boolean, scale: string, arcThickn
     }
 }
 
-export function replaceEllipsis(label: Element, isHighlighted: Boolean){
+// [refactor] Stylistic: param type `Boolean` (object wrapper) -> `boolean` (primitive).
+export function replaceEllipsis(label: Element, isHighlighted: boolean){
 
     const labelBoundingBox = label.getBoundingClientRect().width * (isHighlighted ? 1.6 : 1);
     const mapRatio = (isHighlighted ? 0.2 : 0.3);
@@ -135,19 +144,13 @@ export function addNodeSum(links: any[], uniqueNodes: any[]) {
     const nodeSums: {[key: number]: number} = {};
 
     // Loop through links array and populate nodeSums object
+    // [refactor] Cleanup: accumulate with `?? 0` instead of the `if (nodeSums[x])` truthiness
+    // check. (The old check overwrote when the running sum was exactly 0, but `0 + x === x`, so
+    // the result was the same — this is just clearer and avoids surprises with NaN.)
     links.forEach((link: { source: any; target: any; arcWeightValue: any; }) => {
         const {source, target, arcWeightValue} = link;
-        if (nodeSums[source]) {
-            nodeSums[source] += arcWeightValue;
-        } else {
-            nodeSums[source] = arcWeightValue;
-        }
-        
-        if (nodeSums[target]) {
-            nodeSums[target] += arcWeightValue;
-        } else {
-            nodeSums[target] = arcWeightValue;
-        }
+        nodeSums[source] = (nodeSums[source] ?? 0) + arcWeightValue;
+        nodeSums[target] = (nodeSums[target] ?? 0) + arcWeightValue;
     });
 
     uniqueNodes.map(function(element, index) {
@@ -178,46 +181,13 @@ export function calcNodeRadius(uniqueNodes: any[], links: any[], options: any) {
     })
 }
 
-export function calcDiagramHeight(nodes: any[], links: any[], panelWidth: number, fontSize: number) {
-    let maxArcHeight = 0
-    if(links.length !== 0) {
-        let maxNodesCrossed = 0;
-        let maxArc = null;
-
-        for (const link of links) {
-            const nodesCrossed = Math.abs(link.target - link.source);
-            if (nodesCrossed > maxNodesCrossed) {
-                maxNodesCrossed = nodesCrossed;
-                maxArc = link;
-            }
-        }
-    
-        const maxArcDistance = maxArc.target - maxArc.source
-        const step = (panelWidth-50 - 50) / (nodes.length - 1);
-        maxArcHeight = (maxArcDistance * step) / 2
-    }
-
-    const longestName = nodes.reduce((acc, curr) => {
-        if (curr.name.length > acc.name.length) {
-            return curr;
-        } else {
-            return acc;
-        }
-    }).name;
-    
-    // * 3.77 maps string to pixels, * 1.6 maps to highlighted tag
-    // add mapping to font size configured in the options
-    const longestNameSize = longestName.length * 3.77 * 1.6 * (fontSize/10)
-    // 31.99px is the height of the panel title
-    const graphHeight = maxArcHeight + longestNameSize + 31.99
-
-    return graphHeight
-}
-
 export function clusterNodes(uniqueNodes: any[], links: any[], options: any, theme: any, allData: any) {
       
-    const srcCluster = allData.find((obj: { name: any; }) => obj.name === options.srcCluster)?.values.buffer
-    const dstCluster = allData.find((obj: { name: any; }) => obj.name === options.dstCluster)?.values.buffer
+    // [refactor] Grafana 10+ : Field.values is a plain array (the old ArrayVector `.buffer`
+    // was removed). This `.values.buffer` -> `.values` change is the fix that unbroke node
+    // clustering on current Grafana.
+    const srcCluster = allData.find((obj: { name: any; }) => obj.name === options.srcCluster)?.values
+    const dstCluster = allData.find((obj: { name: any; }) => obj.name === options.dstCluster)?.values
 
     // add cluster to nodes
     for(let i = 0; i < links.length; i++) {
@@ -265,11 +235,12 @@ export function clusterNodes(uniqueNodes: any[], links: any[], options: any, the
     })
 
     // reassign links source and target values because node order was changed
-
+    // [refactor] Bug fix: guard the lookups so an unmatched srcName/dstName keeps the existing
+    // source/target instead of throwing on `undefined.id`.
     links.forEach(link => {
-      link.source = uniqueNodes.find( node => node.name === link.srcName).id
-      
-      link.target = uniqueNodes.find(node => node.name === link.dstName).id
+      link.source = uniqueNodes.find( node => node.name === link.srcName)?.id ?? link.source
+
+      link.target = uniqueNodes.find(node => node.name === link.dstName)?.id ?? link.target
 
     });
 }
@@ -285,10 +256,14 @@ export function calcBottomOffset(labels: NodeListOf<Element>) {
     return offsetBottom
 }
 
-export function getFieldDisplayNames(allData: any[], sourceString?: string, targetString?: string) {
-    let displayNames = []
+// [refactor] Typed the return as FieldDisplayName[] (was implicit any[]). Note: the now-unused
+// `calcDiagramHeight` helper that previously lived in this file was removed during the refactor.
+export function getFieldDisplayNames(allData: any[], sourceString?: string, targetString?: string): FieldDisplayName[] {
+    const displayNames: FieldDisplayName[] = []
     allData.forEach( field => {
-        const displayName = (field.state.displayName !== undefined) ? field.state.displayName : field.name
+        // [refactor] Bug fix: optional-chain `field.state` (a field may not have a populated
+        // state) and fall back to the field name.
+        const displayName = (field.state?.displayName !== undefined) ? field.state.displayName : field.name
         // check if the displayname is defined
         if(field.name !== sourceString && field.name !== targetString) {
             displayNames.push({
@@ -302,7 +277,7 @@ export function getFieldDisplayNames(allData: any[], sourceString?: string, targ
 
 export function isTimeSeries(data: any): boolean {
     // check if datasource is timeseries
-    const dataSources = data.request.targets
+    const dataSources = data.request?.targets
     if(dataSources !== undefined) {
         for(let i = 0; i < dataSources.length; i++) {
             if (dataSources[i].type === "date_histogram") {
@@ -310,12 +285,13 @@ export function isTimeSeries(data: any): boolean {
             }
         }
     }
+    // [refactor] Bug fix: a query is a time series if *any* field is of type "time". The old
+    // loop had an `else { return false }` that returned on the first field, missing time fields
+    // in later positions. Also hardened `data.request.targets` -> `data.request?.targets` above.
     const fields = data.series[0].fields
     for(let i = 0; i < fields.length; i++) {
         if (fields[i].type === "time") {
             return true;
-        } else {
-            return false;
         }
     }
     return false;

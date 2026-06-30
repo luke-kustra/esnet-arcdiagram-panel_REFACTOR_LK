@@ -1,4 +1,10 @@
+// [refactor] Added real types throughout this file: the signature is now
+// (data, options: SimpleOptions, theme: GrafanaTheme2): ParsedData, and the local
+// `uniqueNodes`/`links`/`visited`/`overlapGroups` collections are typed (were implicit `any`).
+// Logic unchanged.
+import { GrafanaTheme2 } from '@grafana/data';
 import { calcNodeRadius, calcStrokeWidth, getEvenlySpacedColors, getFieldDisplayNames } from "utils";
+import { Link, Node, ParsedData, SimpleOptions } from "types";
 
 /**
  * Takes data from Grafana query and returns it in the format needed for this panel
@@ -11,12 +17,14 @@ import { calcNodeRadius, calcStrokeWidth, getEvenlySpacedColors, getFieldDisplay
  * @return {hexColors} colors converted to hex
  */
 
-export function parsePathData(data: { series: any[] }, options: any, theme: any) { // <- should that have proper typing?
+export function parsePathData(data: { series: any[] }, options: SimpleOptions, theme: GrafanaTheme2): ParsedData {
 
   const allData = data.series[0].fields;
   const paths = allData[0].values;
 
-  const arcWeightString = options.arcWeightSource ? allData.find((obj: { name: any; }) => obj.name === options.arcWeightSource).name : allData[allData.length -1].name
+  // [refactor] Bug fix: optional-chain the field lookup so a configured-but-unmatched weight
+  // field falls back to the last field instead of throwing on `undefined.name`.
+  const arcWeightString = options.arcWeightSource ? (allData.find((obj: { name: any; }) => obj.name === options.arcWeightSource)?.name ?? allData[allData.length -1].name) : allData[allData.length -1].name
   const arcWeightValues = allData.find((obj: { name: any; }) => obj.name === arcWeightString)?.values
   
   const fields = getFieldDisplayNames(allData)
@@ -25,7 +33,8 @@ export function parsePathData(data: { series: any[] }, options: any, theme: any)
 
   /********************************** Nodes **********************************/
 
-    let uniqueNodes = Array.from([...new Set(allData[0].values.join(delimiter).split(delimiter))]).map((str, index) => ({
+    // [refactor] Stylistic: `let` -> `const` (never reassigned).
+    const uniqueNodes: Node[] = Array.from([...new Set<string>(allData[0].values.join(delimiter).split(delimiter))]).map((str, index) => ({
       id: index,
       name: str,
       sum: 1,
@@ -37,10 +46,13 @@ export function parsePathData(data: { series: any[] }, options: any, theme: any)
 
     const pathColors = getEvenlySpacedColors(paths.length, theme.isDark)
 
-    let links: Array<{ source: number | undefined; target: number | undefined; path: number; arcWeightValue: number; strokeWidth: number; color: string; displayValue: string; isOverlap: boolean; mapRadiusY: number; id: number }> = [];
+    const links: Link[] = [];
 
     paths.forEach((path: string, pathIndex: number) => {
-      const pathNodes = String(path).split(' ');
+      // [refactor] Bug fix: split each path on the configured `delimiter` (matching how the
+      // unique nodes are built above). It previously hard-coded a space, so any non-space
+      // delimiter produced node names that never matched and yielded an empty diagram.
+      const pathNodes = String(path).split(delimiter);
 
       for (let i = 0; i < pathNodes.length; i++) {
         const source = uniqueNodes.find( (node: any) => node.name === pathNodes[i])?.id;
@@ -49,11 +61,11 @@ export function parsePathData(data: { series: any[] }, options: any, theme: any)
         const isOverlap = links.some((link: any) => link.source === source && link.target === target);
       
         if(target !== undefined) {
-          const link = {
-            id: 0, 
-            source, 
-            target, 
-            path: pathIndex,
+          const link: Link = {
+            id: 0,
+            source,
+            target,
+            pathIndex,
             arcWeightValue: arcWeightValues[pathIndex],
             strokeWidth: 1,
             color: pathColors[pathIndex],
@@ -80,8 +92,8 @@ export function parsePathData(data: { series: any[] }, options: any, theme: any)
     // assign overlap index to render elliptical arc
     const overlapLinks = links.filter(link => link.isOverlap)
 
-    const overlapGroups = [];
-    const visited = [];
+    const overlapGroups: Link[][] = [];
+    const visited: Link[] = [];
 
     for (let i = 0; i < overlapLinks.length; i++) {
       const currentLink = overlapLinks[i];
