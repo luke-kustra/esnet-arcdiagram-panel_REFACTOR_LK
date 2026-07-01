@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint --cache .",
     "lint:fix": "npm run lint -- --fix && prettier --write --list-different .",
-    "e2e": "playwright test",
+    "e2e": "playwright test -c \"test files/playwright.config.ts\"",
     "server": "docker compose up --build",
     "sign": "sign-plugin"
   },
