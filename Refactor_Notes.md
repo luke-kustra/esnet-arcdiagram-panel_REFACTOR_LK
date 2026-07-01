@@ -1,357 +1,185 @@
 # Refactor Notes — esnet-arcdiagram-panel
 
-This document records the modernization refactor of the Arc Diagram Grafana panel plugin.
-A **refactor** here means: the rendered output (the arc diagram and all its controls) stays
-the same; only the internal/functional code and the build tooling change. The driving goal
-was to make the plugin build and run on the **latest Grafana (13.x)**, which it previously
-could not.
+Modernization refactor of the Arc Diagram Grafana panel. The core modernization is
+**output-preserving** (the rendered diagram and controls stay the same; only internal code,
+types, and build tooling change). Driving goal — make the plugin build and run on **latest
+Grafana (13.x)**, which it previously could not. Every change site is marked in code with a
+`// [refactor]` comment.
+
+> **Exception:** the *Grafana 13 rendering fixes* section below intentionally changes on-screen
+> output — the original rendering was actually broken on Grafana 13 (diagram drew off-screen),
+> so preserving it was neither possible nor desirable.
+
+> Latent bugs surfaced during the work were also fixed (the user opted in). Those behavior
+> changes are intentionally **not** detailed here — each is documented inline at its `// [refactor]`
+> comment with a regression test where practical. This document focuses on the modernization.
 
 ---
 
-## Why this refactor
+## Why
 
-The plugin was scaffolded with an early `@grafana/create-plugin` (Grafana 9.x era) and was
-pinned to **React 17** and the **Grafana 9.x SDK**. On current Grafana (tested against a local
-**13.0.2** install) it was partly broken — most notably node clustering, because
-`src/utils.ts` read `field.values.buffer`, and the `Vector.buffer` internal was **removed in
-Grafana 10+**. The dependency set also used floating `latest` versions (non-reproducible
-builds) and carried junk/unused packages.
-
-### Goals (confirmed with the user)
-- **Depth:** full modernization — not just the minimum to compile.
-- **Target:** latest Grafana only (Grafana 13 / React 18 / `@grafana/* ^13`). Grafana 9/10
-  support is intentionally dropped.
-- **Bugs:** fix obvious latent bugs (output may differ in the documented edge cases below).
-- **Verification:** add parser/util unit tests + manual visual diff at `localhost:3000`.
-
----
+Scaffolded on Grafana-9-era `@grafana/create-plugin`, pinned to React 17 + Grafana 9 SDK. On
+Grafana 13 it was partly broken — notably node clustering, because `src/utils.ts` read
+`field.values.buffer`, an internal removed in Grafana 10+. Deps also used floating `latest`
+versions and carried unused packages.
 
 ## Target stack
 
 | Item | Before | After |
 |------|--------|-------|
-| `@grafana/data` / `ui` / `runtime` | 9.x / floating `latest` | `^13.0.0` (pinned) |
+| `@grafana/*` (data/ui/runtime/schema/i18n) | 9.x / floating `latest` | `^13.0.2` (pinned) |
 | `grafanaDependency` (plugin.json) | `>=9.4.0` | `>=12.0.0` |
 | React / react-dom | 17.0.2 | 18.3.x |
-| TypeScript | ^4.4 | ^5.x |
-| `.config/` build tooling | old committed snapshot | re-scaffolded (`@grafana/create-plugin` 7.x) |
-| Node | `.nvmrc` 16 / engines `>=14` | `.nvmrc` 22 / engines `>=22` |
-
-> Note: local dev machine is on **Node v26.3.1**, which is newer than Grafana tooling
-> officially supports (20/22). Watch for build-tool incompatibilities.
-
----
-
-## Change log (by phase)
-
-### Phase 0 — Baseline & safety net  ✅
-- Confirmed starting state: `@grafana/data`/`ui` 9.4.7, `@grafana/runtime` 9.3.8, React 17.0.2.
-- Both `yarn.lock` and `package-lock.json` present (to be reduced to one).
-- Latest published SDK confirmed as **13.1.0** (matches local Grafana 13.0.2); React peer dep
-  for Grafana 13 is `^18.0.0`.
-- Created this document.
-
-### Phase 1 — Tooling & dependency modernization  ✅
-- **Migrated the `.config/` tooling** to the current scaffold via
-  `npx @grafana/create-plugin@latest migrate` (create-plugin 7.8.0). This replaced the
-  Grafana-9-era webpack/jest/eslint/tsconfig snapshot with the modern equivalents (flat
-  ESLint config, webpack 5.10x, SWC, Playwright-based e2e scaffolding, new Docker base) and
-  added the `.config/.cprc.json` version marker so future `update` runs work.
-- **Rewrote `package.json`** to the modern dependency set:
-  - `@grafana/data` / `ui` / `runtime` / `schema` / `i18n` → `^13.0.2` (was 9.x / floating
-    `latest`). Pins the SDK to one major; matches the local Grafana 13.0.2.
-  - React / react-dom → `^18.3.0` (was 17.0.2).
-  - TypeScript → `5.9.2` (was ^4.4). ESLint 9 flat config, Prettier 3, Jest 29.7, etc.
-  - **Removed junk/unused deps:** `nvm`, `reload`, `watch`, `jsdoc`, `grafana-plugin-support`,
-    plus unused `@types/jquery` and `@types/lodash` (no jquery/lodash usage in `src/`).
-  - Modernized scripts: `lint` → `eslint --cache .`, `e2e` → `playwright test`,
-    `server` → `docker compose up --build`, `sign` → `sign-plugin`.
-- **Standardized on npm:** deleted `yarn.lock` (kept a regenerated `package-lock.json`),
-  removed the `packageManager: yarn@…` field.
-- Created root **`eslint.config.mjs`** (flat config extending `.config/eslint.config.mjs`) and
-  removed the legacy `.eslintrc`.
-- `.nvmrc` → `22`; `engines.node` → `>=22` (was 16 / `>=14`).
-- `src/plugin.json` → `grafanaDependency: ">=12.0.0"` (was `>=9.4.0`).
-- **TS strict mode is now ON** (inherited from `@grafana/tsconfig` v2): `strict`,
-  `noImplicitAny`, `strictNullChecks`. This surfaced 10 implicit-`any` type errors in
-  `dataParser.ts` / `pathDataParser.ts` / `utils.ts` — fixed in Phase 3.
-- **Verified:** `npm install` (Node 26 — works despite an EBADENGINE warning for >24),
-  `npm run build` compiles cleanly (webpack 5.108.3, `module.js` emitted), `eslint .` is clean.
-
-> Note: the production build uses `swc-loader` (no type-checking), so it builds even with the
-> Phase-3 type errors outstanding; `npm run typecheck` is the gate for those.
-
-### Phase 2 — Grafana data-access modernization  ✅
-- **`src/utils.ts` `clusterNodes` (the primary break):** changed `?.values.buffer` →
-  `?.values` on both the source and destination cluster fields. In Grafana 9 `Field.values`
-  was an `ArrayVector` whose `.buffer` held the backing array; from Grafana 10 `Field.values`
-  *is* a plain array and `.buffer` is `undefined`. This is why node clustering threw on the
-  user's Grafana 13. The replacement yields the same array, so behavior is preserved (now it
-  actually runs).
-- **Audited all other `field.values` access** (`dataParser.ts`, `pathDataParser.ts`,
-  `Arc.tsx`): they index/spread/`join` the values directly (`?.values[i]`, `[...values]`,
-  `.values.join()`), which works identically on a plain array — no further changes needed.
-- **Confirmed still-valid APIs** (not deprecated on Grafana 13, per ESLint `no-deprecated`):
-  `field.display(...).text/.suffix/.color`, `field.state.displayName`, and the
-  `useFieldConfig({ disableStandardOptions, standardOptions })` block in `module.ts`. Left the
-  field-config untouched to keep the standard-options output identical.
-- **Removed the dead `renderCounter` prop** (removed from `PanelProps` in newer Grafana). It
-  was passed from `SimplePanel` to `Arc` but never read inside `Arc`. (The matching
-  destructure in `SimplePanel` is cleaned up with the prop-typing work in Phase 3.)
-- **Verified:** typecheck shows the same 10 pre-existing strict-mode errors (no regressions);
-  `npm run build` still compiles cleanly.
-
-### Phase 3 — Internal modernization  ✅
-**Shared type model (`src/types.ts`)**
-- Rewrote `SimpleOptions` to exactly the 30 option paths the builder sets (removed 9 stale
-  fields that were never set — `text`, `labelsOnHover`, `showSeriesCount`, `groupLinkColor`,
-  `linkColor`, `toolTipMetric`, `toolTipGroupBy`, `dups`, `zoomFactor` — and added the missing
-  `colorConfigField`). Fixed `arcWeightSource` from `number` → `string` (it holds a field name).
-- Added shared interfaces `Node`, `Link`, `FieldDisplayName`, `ParsedData`. `Link` keeps an
-  `[key: string]: any` index signature for the dynamically option-named fields (e.g. the
-  color-config field and per-field display arrays), so those accesses type-check without casts
-  while the fixed fields stay strongly typed.
-
-**Typed the data layer (`dataParser.ts`, `pathDataParser.ts`, `utils.ts`)**
-- Typed the parser signatures: `(data, options: SimpleOptions, theme: GrafanaTheme2):
-  ParsedData`, and typed the `uniqueNodes`/`links`/`visited`/`groups`/`displayNames`
-  collections. This resolved all 10 strict-mode `noImplicitAny`/indexing errors with real
-  types (no `any` shortcuts). Algorithms are byte-for-byte unchanged.
-
-**Styles (`src/styles.ts`)**
-- Converted all kebab-case CSS keys (`"z-index"`, `"border-radius"`, `"font-size"`,
-  `"background-color"`, …) to camelCase and imported the real `CSSProperties` type (dropping
-  the global-`React` reliance). **Verified output-safe:** an empirical `renderToStaticMarkup`
-  test showed React emits identical CSS for the kebab and camel forms — the only change is the
-  removal of React's dev-time "Unsupported style property" warnings. To be re-confirmed
-  visually in Phase 5.
-
-**`Arc.tsx` (the D3 component)**
-- Replaced the **module-level mutable `toolTip` singleton** (shared across every panel
-  instance on a page — a real multi-instance bug) with component `useState`. Tooltip content
-  is now built as a fresh object and committed via `setToolTip`; output identical for a single
-  panel, correct for multiple.
-- Replaced the **global `localStorage("this")` first-render flag** with a per-instance
-  `useRef` (`wasInViewRef`), and moved the detection **into the effect** (ref mutation during
-  render is unsafe and was flagged by `eslint-plugin-react-hooks` v7). The effect re-runs on
-  the view→edit transition because the panel's width/height change, so the first-render
-  `setTimeout` layout path still fires. **The load-bearing `setTimeout(…,100)` edit-mode
-  re-render and its `offsetFirstRender=40` adjustment are preserved unchanged** — needs
-  edit-mode visual verification (Phase 5).
-- Fixed the `eqeqeq` violations correctly: `d.srcElement.id == l?.source` compared a DOM id
-  **string** to a numeric source, so a naive `===` would always be false and break
-  highlighting. Changed to `Number(d.srcElement.id) === l?.source`, preserving behavior, and
-  removed the `eslint-disable eqeqeq`.
-- Typed the component props via an `ArcProps` interface. D3 selection callbacks (`(d|l|n:
-  any)`) are left `any` — this is the genuine D3 interop boundary and forcing D3's datum/event
-  generics here would add risk without value.
-
-**Other**
-- `SimplePanel.tsx`: typed props as `PanelProps<SimpleOptions>` (removed the `: any` cast and
-  the dead `renderCounter` destructure), typed `parsedData` as `ParsedData`, removed the dead
-  empty `isCluster > 5` block and the commented-out `calcDiagramHeight` guard.
-- Removed the now-unused **`calcDiagramHeight`** helper from `utils.ts`.
-- `SearchField.tsx`: typed props via a `SearchFieldProps` interface.
-- Cleaned vestigial commented-out braces in `dataParser.ts`.
-- **Verified:** typecheck, `eslint .`, and `npm run build` all clean.
-
-> Residual `any` (~90, mostly `module.ts` field-builder `getOptions` callbacks and `Arc.tsx`
-> D3 callbacks) is deliberate interop typing, not the data model. The data model itself is now
-> fully typed.
-
-> Deliberately **preserved a latent bug** for Phase 4: `Arc.tsx` `updateTooltip` passes
-> `(props as any).zoom` (an undefined prop) to the tooltip text style instead of
-> `tooltipFontSize`. Kept identical here; fixed in Phase 4.
-
-### Phase 4 — Bug fixes  ✅
-See the **Bugs fixed** section below for the behavior-change details. Summary:
-- `CustomRangeSlider` now restores its saved value instead of always showing `[1, 15]`.
-- The two range editors (`arcRange`, `nodeRange`) now have distinct editor ids.
-- `isTimeSeries` now inspects all fields (was only the first); also guards `data.request`.
-- `Arc.tsx` tooltips now use the configured tooltip font size (was an undefined prop).
-- `SimplePanel` shows "No data" instead of throwing on an empty query result.
-- **Verified:** typecheck, lint, and build all clean.
-
-### Phase 5 — Tests & verification  ✅
-- Added **unit tests** (25 tests, 4 suites, all green):
-  - `src/utils.test.ts` — pure helpers (`linSpace`, `mapToLinRange`, `mapToLogRange`,
-    `getEvenlySpacedColors`, `idToName`, `getNodeTargets`, `addNodeSum`, `calcStrokeWidth`,
-    `calcNodeRadius`) plus an `isTimeSeries` **regression test** locking in the Phase-4 fix.
-  - `src/dataParser.test.ts` — characterizes node/link construction, stroke width, node color,
-    and weight-sum accumulation for the simple (source/target) mode.
-  - `src/pathDataParser.test.ts` — characterizes node splitting, per-hop link creation, and
-    overlap detection for hop/AS-path mode.
-  - `src/module.test.ts` — replaced the stub with real checks that the plugin registers as a
-    `PanelPlugin`, wires the panel, and runs its options builder.
-- Extended the Jest `transformIgnorePatterns` (in the root `jest.config.js`) to transform the
-  ESM `d3` packages, so importing the panel under Jest no longer fails.
-- **CI** (`.github/workflows/ci.yml`): rewritten to npm + Node 22 and now runs
-  `typecheck` → `lint` → `test:ci` → `build` (previously it only ran `build`). Dropped the dead
-  Go-backend steps (no `Magefile.go`). **Release** workflow updated to npm + Node 22.
-- **Static-asset copy fix (regression caught during verification).** The new scaffold's
-  webpack only copies the logo + screenshot referenced in `plugin.json`, whereas the panel
-  loads several SVG icons at runtime by absolute path (the zoom buttons:
-  `img/area_zoom_out.svg`, etc.). The first rebuild dropped them from `dist/img`, which would
-  have 404'd the zoom icons. Fixed by adding a root `webpack.config.ts` that extends the
-  scaffolded config (via `webpack-merge`) with a `CopyWebpackPlugin` pattern copying
-  `src/img → dist/img`, and pointing the `build`/`dev` scripts at it. Verified all original
-  `dist/img` assets are present again.
-- **Live check:** rebuilt `dist/`, restarted local Grafana 13.0.2, and confirmed the log shows
-  `Plugin registered pluginId=esnet-arcdiagram-panel` with no load errors.
-
-> **Still recommended (human visual diff):** render the panel in the running Grafana with
-> representative node/link data in **both** normal and hop modes and compare against the prior
-> behavior — paying attention to (a) the **edit-mode first render** (the preserved
-> `setTimeout` layout path, now driven by a per-instance ref instead of `localStorage`) and
-> (b) tooltip styling (camelCase styles + tooltip font-size bug fix). The automated checks
-> can't fully cover on-screen layout.
+| TypeScript | ^4.4 | 5.9.2 (strict on) |
+| `@grafana/eslint-config` | — (legacy `.eslintrc`) | `^10.0.0` (flat, unified stylistic) |
+| `.config/` tooling | Grafana-9 snapshot | re-scaffolded (create-plugin 7.8) |
+| Package manager | yarn + npm | npm only |
+| Node | `.nvmrc` 16 / `>=14` | `.nvmrc` 22 / `>=22` |
 
 ---
 
-## Bugs fixed (behavior changes)
+## Phase 1 — Tooling & dependency modernization
 
-Each of these changes the rendered/behavioral output in a specific edge case (the user opted
-in to fixing obvious bugs). Everywhere else, output is unchanged.
+- Migrated `.config/` to the current scaffold via `@grafana/create-plugin migrate` (webpack 5,
+  flat ESLint 9, SWC, Playwright e2e, new Docker base).
+- Rewrote `package.json` to the modern pinned set; removed junk deps (`nvm`, `reload`, `watch`,
+  `jsdoc`, `grafana-plugin-support`, unused `@types/jquery`/`@types/lodash`).
+- Standardized on npm (deleted `yarn.lock`, removed the `packageManager` field).
+- Root `eslint.config.mjs` (flat config extending `.config/`); removed legacy `.eslintrc`.
+- `.nvmrc` → 22, `engines.node` → `>=22`; `plugin.json grafanaDependency` → `>=12.0.0`.
+- **TS strict mode ON** (from `@grafana/tsconfig` v2) — surfaced the implicit-`any` errors fixed
+  in Phase 3.
+- Added a root `webpack.config.ts` that extends the scaffold to copy `src/img → dist/img` (the
+  new scaffold otherwise drops the runtime-loaded zoom-button SVGs — caught during verification).
 
-1. **`CustomRangeSlider` ignored its saved value** (`src/components/CustomRangeSlider.tsx`).
-   - *Before:* the slider was hard-coded to `value={[1, 15]}`, so the "Range for weighted
-     links/nodes" editors always reset to 1–15 visually, no matter what was saved.
-   - *After:* it parses the stored `"min,max"` string and displays the actual saved range,
-     falling back to `[1, 15]` only when unset.
-   - *Affects:* the editor UI for `arcRange` / `nodeRange` when a non-default range was saved.
+## Phase 2 — Grafana data-access modernization
 
-2. **Duplicate custom-editor id** (`src/module.ts`).
-   - *Before:* both the `arcRange` and `nodeRange` custom editors were registered with
-     `id: "setRange"`.
-   - *After:* `"setArcRange"` and `"setNodeRange"`.
-   - *Affects:* internal editor identity; avoids potential collisions in the options editor.
+- **The primary break:** `src/utils.ts` `clusterNodes` `?.values.buffer` → `?.values`. In
+  Grafana 10+ `Field.values` *is* a plain array (the old `ArrayVector.buffer` was removed). This
+  is the fix that unbroke node clustering on current Grafana.
+- Audited all other `field.values` access (index/spread/`join`) — works unchanged on a plain
+  array; no further changes needed.
+- Confirmed still-valid APIs (`field.display(...)`, `field.state.displayName`, the
+  `useFieldConfig` block) are not deprecated on Grafana 13; left field-config untouched.
+- Removed the dead `renderCounter` prop (gone from `PanelProps`).
 
-3. **`isTimeSeries` only checked the first field** (`src/utils.ts`).
-   - *Before:* an `else { return false }` inside the field loop returned on the first field, so
-     a `time`-typed field in any later position was missed and the data was treated as
-     non-time-series.
-   - *After:* the loop scans every field and returns true if any is `time`. Also hardened
-     `data.request.targets` → `data.request?.targets` to avoid a crash when `request` is absent.
-   - *Affects:* datasets whose time field is not the first field — now correctly rejected with
-     "Time series not supported".
+## Phase 3 — Internal modernization (output preserved)
 
-4. **Tooltip inner lines used an undefined font size** (`src/components/Arc.tsx`).
-   - *Before:* `updateTooltip` styled the node-target and link-field `<p>` lines with
-     `props.zoom`, a prop that is never passed (so `font-size: undefinedpx`, which browsers
-     ignore).
-   - *After:* uses `props.graphOptions.tooltipFontSize`, matching the tooltip container.
-   - *Affects:* the font size of the inner tooltip lines now honors the configured "Tooltip
-     font size".
+- **Typed data model** (`src/types.ts`): added `Node`, `Link`, `FieldDisplayName`, `ParsedData`;
+  rewrote `SimpleOptions` to the exact 30 builder option paths. Typed the parsers
+  (`dataParser.ts`, `pathDataParser.ts`) and `utils.ts` end-to-end. Algorithms unchanged.
+- **`Arc.tsx`:** replaced the module-level mutable `toolTip` **singleton** (shared across every
+  panel instance on a page — a real multi-instance bug) with component `useState`; replaced the
+  global `localStorage` first-render flag with a per-instance `useRef`.
+- **`styles.ts`:** kebab-case CSS keys → camelCase (verified React emits identical CSS).
+- Removed dead code (`calcDiagramHeight`, empty/commented blocks); typed `SimplePanel`,
+  `SearchField`, and the D3 component props.
 
-5. **No-data crash guard** (`src/SimplePanel.tsx`).
-   - *Before:* an empty query result made `data.series[0].fields` throw.
-   - *After:* renders a "No data" message.
-   - *Affects:* the empty-result case (graceful message instead of an error).
+## Tests & CI
+
+- 30 unit tests across `utils`, `dataParser`, `pathDataParser`, `module` (incl. regressions);
+  Jest `transformIgnorePatterns` extended for ESM d3.
+- CI now runs `typecheck → lint → test:ci → build` (was build-only) on npm + Node 22; dropped
+  dead Go-backend steps. Release workflow updated to npm + Node 22.
 
 ---
 
-## Bug scan findings (now fixed)
+## Post-refactor follow-ups (resolved known issues)
 
-A scan of the code surfaced the issues below; **all have since been fixed**. Each fix is marked
-in code with a `// [refactor]` comment, and regression tests were added where practical. As with
-the Phase-4 fixes, these change behavior only in the specific broken edge cases.
+These were originally deferred and have since been completed:
 
-### Functional — fixed
+- **ESLint stylistic deprecation** — upgraded `@grafana/eslint-config` 9 → 10 (which uses the
+  unified `@stylistic/eslint-plugin` instead of the deprecated `@stylistic/eslint-plugin-ts`) and
+  updated the changed flat-config import path in `.config/eslint.config.mjs`. `eslint .` is clean
+  with no deprecation notice.
+- **Residual `any` eliminated** — the data layer is typed with real Grafana/shared types
+  (`Field`, `Node`, `Link`, `PanelData`), and the `Arc.tsx` D3 selection callbacks now infer
+  `Node`/`Link` via explicit `d3.selectAll<…>` datum generics. The **only** remaining `any` is
+  the deliberate `[key: string]: any` index signature on `Link` in `types.ts`, which models the
+  dynamically-named Grafana fields (color-config / per-field display arrays); converting it to
+  `unknown` would force casts at every dynamic-field access without adding real safety.
+- **Edit-mode first render** — the fragile fixed `setTimeout(…, 100)` re-layout was replaced with
+  a **`ResizeObserver`** that fires the *same* re-layout body (including the load-bearing
+  `offsetFirstRender = 40` adjustment) on its first post-layout observation, then disconnects;
+  the effect cleanup disconnects it on unmount. Output is preserved by construction. ⚠️ *Still
+  needs a human visual check in panel-edit mode — automated checks can't cover on-screen layout.*
+- **Tooltip → Grafana component** — the hand-rolled `<div id="tooltip">` and its manual
+  `getBoundingClientRect` positioning math were replaced with Grafana's
+  **`<VizTooltipContainer>`** (rendered in a `<Portal>`), which handles cursor positioning and
+  viewport edge-collision. The tooltip content/wiring (`updateTooltip`, `showTooltip` state) is
+  unchanged, **except its text color**, which is now taken from the theme (`props.textColor` =
+  `theme.colors.text.primary`) — the old hard-coded black was unreadable on the themed (dark)
+  tooltip background. Note: `VizTooltipContainer` is marked `@alpha` in `@grafana/ui`.
 
-- **HIGH — Hop mode ignored the configured delimiter** (`src/pathDataParser.ts`). The per-path
-  hop splitting hard-coded `String(path).split(' ')` while the nodes were built with the
-  `delimiter` option → no links for any non-space delimiter. **Fixed:** split on `delimiter`.
-  Regression test: `pathDataParser.test.ts` "honors a non-space delimiter".
-- **MEDIUM — Division-by-zero → `NaN` in scaling** (`src/utils.ts` `mapToLinRange` /
-  `mapToLogRange`). When `min === max` (single link/node or uniform weights) the mapped
-  width/radius became `NaN`/`Infinity` and the element vanished. **Fixed:** return the range
-  minimum when the result is non-finite (`Number.isFinite` guard). Regression tests added.
-- **MEDIUM — `log` scale with zero/negative sums** (`src/utils.ts` `mapToLogRange`). `log10(0)`
-  is `-Infinity`. **Fixed** by the same `Number.isFinite` fallback. Regression test added.
-- **MEDIUM — Unguarded `.find(...).name/.id` lookups** (`src/dataParser.ts`,
-  `src/pathDataParser.ts`, `src/utils.ts` `idToName` / `clusterNodes`). **Fixed:** optional
-  chaining with sensible fallbacks (default field, existing source/target, or `""`). Regression
-  test: `idToName` returns `""` for an unmatched id.
+---
 
-### Functional (lower severity) — fixed
+## Grafana 13 rendering fixes (found by testing with real data)
 
-- **`field.state` assumed present** (`src/dataParser.ts` `.state.range`; `src/utils.ts`
-  `.state.displayName`). **Fixed** with optional chaining.
-- **`parseData` required ≥2 fields** (`src/dataParser.ts`). **Fixed:** `SimplePanel` now guards
-  non-hop mode with a "Requires at least a source and target field" message before indexing
-  `fields[1]`.
-- **Path-field name collision** (`src/pathDataParser.ts`). A path field literally named `path`
-  overwrote the numeric `link.path`. **Fixed:** renamed the internal property to `pathIndex`
-  (in `types.ts`, the parser, and `Arc.tsx`).
-- **`addNodeSum` falsy-zero overwrite** (`src/utils.ts`). **Reworked** to accumulate with
-  `?? 0`. (Note: the old code actually produced identical results since `0 + x === x`; this is a
-  clarity/robustness cleanup, not a behavior change.)
-- **Swallowed parse errors** (`src/SimplePanel.tsx`). **Fixed:** a parse exception now renders an
-  "Error parsing data" message instead of a silent blank panel.
+The checks above (registration, unit tests) never rendered the panel with actual node/link data,
+so a set of Grafana-9→13 rendering breaks surfaced only during manual testing. These **change the
+rendered output on purpose** — the original code was broken on Grafana 13:
 
-### Stylistic / code quality — fixed
+- **`data-panelid` selector removed (the big one).** Every D3 selection was scoped with
+  `document.querySelectorAll('[data-panelid="<id>"] …')`. Grafana 13 no longer emits that
+  attribute, so all re-selections/measurements matched nothing. Label measurement then returned
+  `Math.max([]) = -Infinity`, which propagated to `cy="Infinity"` / `d="M x Infinity …"` and drew
+  the entire diagram off-screen. **Fixed** by scoping every selection to a wrapper id the plugin
+  controls, `#arc-${props.panelId}` (added to the component's root `<div>` in `Arc.tsx`).
+- **`calcBottomOffset` hardening** (`utils.ts`): returns a `minOffset` when there are no labels
+  (so an empty set can never produce `-Infinity`), and floors the bottom margin at
+  `fontSize * 2`. The node labels are rotated -45° and `getBoundingClientRect` under-reports their
+  extent right after append, which clipped the letters at small font sizes; the font-proportional
+  floor guarantees room.
+- **Visible self-loops** (`Arc.tsx`): a link with `source === target` used to compute a
+  zero-radius (invisible) arc. The arc-path builder was extracted into a shared `arcPathFor(i, y)`
+  helper (used by both the main render and the edit-mode re-layout) that special-cases self-loops
+  into a small loop drawn above the node.
 
-- `replaceEllipsis` param `Boolean` → `boolean` (`src/utils.ts`).
-- Removed unused params: `displayValue` / `linkId` in `updateTooltip` (+ trimmed the call site);
-  `item` / `suffix` in `CustomRangeSlider`.
-- `let` → `const` for never-reassigned bindings (`graphOptions` in `SimplePanel`; `srcById` /
-  `dstById` in `dataParser`; `uniqueNodes` / `links` in `pathDataParser`).
-- `31.99` → named constant `PANEL_TITLE_HEIGHT` (`src/components/Arc.tsx`). (The other magic
-  numbers — `3.77`, the ellipsis `mapRatio` — lived in the now-removed `calcDiagramHeight` or are
-  already local consts.)
-- Residual `any` at the D3 selection / option-builder boundaries is left intentionally (the
-  D3/Grafana interop boundary).
+## Test layout & end-to-end tests
+
+- **All tests live in a top-level `test files/` folder** (name intentionally contains a space):
+  the 4 Jest unit suites plus the Playwright e2e specs. Jest `testMatch`, the root
+  `playwright.config.ts` (`testDir`/`testMatch`), and `eslint.config.mjs` were pointed at it; the
+  `.test.ts` vs `.spec.ts` split keeps Jest and Playwright from picking up each other's files.
+- **`tsconfig.json`** was widened (`rootDir: "."`, includes `test files` + `playwright.config.ts`)
+  so the editor and the `typecheck` gate cover them. (`webpack.config.ts` is deliberately excluded
+  — it extends the scaffold's `.config/webpack` chain, which uses `.ts` import extensions.)
+- **E2E** (`@grafana/plugin-e2e`): `arcdiagram.spec.ts` (loads the viz, checks custom options,
+  and an **Infinity regression guard** asserting rendered `cy`/`d` are finite) and
+  `arcdiagram-visual.spec.ts` (self-loop + dense scenarios that save screenshots to
+  `test files/screenshots/` for human review). Backed by `provisioning/` (an `ArcTestData`
+  datasource + `arc-diagram`/`arc-selfloop`/`arc-dense` dashboards). These require the Docker test
+  Grafana (`npm run server`, which mounts `../provisioning`); run with `npm run e2e`.
 
 ---
 
 ## Known issues left / deferred
 
-- **Edit-mode first-render path preserved as-is.** The `setTimeout(…, 100)` re-render with the
-  `offsetFirstRender = 40` vertical adjustment in `Arc.tsx` is fragile but load-bearing for
-  correct layout when entering the panel editor. It was intentionally **kept** (only its global
-  `localStorage` trigger was replaced with a per-instance ref) to guarantee identical output. A
-  future improvement would be to drive the layout from a `ResizeObserver`/measured dimensions
-  instead, removing the timed re-render — but that needs careful visual testing and is out of
-  scope for an output-preserving refactor.
-- **Residual `any` at interop boundaries.** ~90 `any` remain, almost entirely D3 selection/
-  event callbacks in `Arc.tsx` and the field-builder `getOptions` callbacks in `module.ts`.
-  The data model itself is fully typed; these were left loose deliberately (typing D3's
-  datum/event generics here adds risk without real benefit).
-- **`@stylistic/eslint-plugin-ts` deprecation notice.** The scaffolded ESLint config pulls in
-  `@stylistic/eslint-plugin-ts`, which prints a deprecation message. This comes from
-  `@grafana/create-plugin`'s config and will resolve on a future `npx @grafana/create-plugin
-  update`.
 - **Node 26 local dev.** Builds/tests pass, but Grafana tooling officially targets Node 20/22
-  (`engines` is set to `>=22`). Using an LTS Node (20/22) is recommended for reproducibility.
+  (`engines` is `>=22`). Using an LTS Node (20/22) is recommended for reproducibility. *(This is
+  the only remaining deferred item.)*
 
 ---
 
-## How to build, run, and verify (post-refactor)
+## How to build, run, and verify
 
-**Install & build**
 ```
 npm install          # Node 20/22 recommended (works on 26 with an engine warning)
-npm run build        # production build -> dist/
-npm run dev          # webpack watch for development
-```
-
-**Run locally (native Grafana, no Docker)**
-The plugin is symlinked into the local Grafana plugins dir
-(`/opt/homebrew/var/lib/grafana/plugins/esnet-arcdiagram-panel -> ./dist`) and allowed as an
-unsigned plugin in `grafana.ini`. After a build:
-```
-brew services restart grafana      # reload the plugin
-# open http://localhost:3000  (admin / admin)
-```
-Add an **Arc Diagram** panel to a dashboard, backed by a data source that returns
-node/link-style data (source/target/weight fields, or path strings for hop mode).
-
-**Quality gates**
-```
+npm run build        # production build -> dist/   (npm run dev for watch)
 npm run typecheck    # tsc --noEmit (strict)
 npm run lint         # eslint flat config
 npm run test:ci      # jest unit tests
 ```
 
-All four gates are green as of this refactor, and the plugin registers cleanly on the local
-Grafana 13.0.2.
+The plugin is symlinked into the local Grafana plugins dir
+(`/opt/homebrew/var/lib/grafana/plugins/esnet-arcdiagram-panel -> ./dist`) and allowed as
+unsigned in `grafana.ini`. After a build, `brew services restart grafana` and open
+http://localhost:3000 (admin / admin). Add an **Arc Diagram** panel backed by node/link-style
+data (source/target/weight fields, or path strings for hop mode).
+
+All four gates (typecheck, lint, tests, build) are green, and the plugin registers cleanly on the
+local Grafana 13.0.2.
+
+> **Recommended human visual diff:** render the panel in both normal and hop modes and compare
+> against prior behavior — paying attention to (a) the **edit-mode first render** (now driven by
+> a `ResizeObserver`) and (b) the **tooltip** (now Grafana's `VizTooltipContainer`).

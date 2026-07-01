@@ -36,4 +36,14 @@ export default defineConfig([
     ],
   },
   ...baseConfig,
+  {
+    // [refactor] The unit + e2e tests live in the top-level "test files" folder (a non-src
+    // location), so the scaffold's `src/**`-scoped TypeScript config block doesn't register
+    // them for linting. Add them here — but without the type-aware `project` parserOptions,
+    // since they are intentionally outside tsconfig's `include`.
+    files: ['test files/**/*.{ts,tsx}'],
+    rules: {
+      'react-hooks/rules-of-hooks': 'off',
+    },
+  },
 ]);

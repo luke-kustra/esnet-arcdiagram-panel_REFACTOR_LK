@@ -34,9 +34,13 @@ export const styles = {
         borderRadius: "5px",
         opacity: 0.9
       } as CSSProperties,
-      text(fontSize: number): CSSProperties {
+      text(fontSize: number, color: string): CSSProperties {
         return {
-          color: "black",
+          // [refactor] Color is passed in from the theme (props.textColor =
+          // theme.colors.text.primary) instead of being hard-coded "black". The tooltip now
+          // renders inside Grafana's <VizTooltipContainer>, whose background is themed (dark in
+          // dark mode), so black text was unreadable. The themed color is readable in both modes.
+          color,
           fontSize: `${fontSize}px`,
           margin: "0",
           fontWeight: 100

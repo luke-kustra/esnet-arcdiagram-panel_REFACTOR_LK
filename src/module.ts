@@ -21,7 +21,7 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       path: 'delimiter',
       name: 'String delimiter',
       description: 'Character to seperate nodes by',
-      defaultValue: "Space",
+      defaultValue: "space",
       category: ModeCategory,
       settings: {
         allowCustomValue: false,
@@ -254,14 +254,14 @@ export const plugin = new PanelPlugin<SimpleOptions>(SimplePanel).setPanelOption
       name: 'Tooltip source',
       category: AppearanceCategory,
       defaultValue: "From: ",
-      description: 'Text to be displayed infront of target node.',
+      description: 'Text to be displayed infront of source node.',
     })
     .addTextInput({
       path: "toolTipTarget",
       name: 'Tooltip target',
       category: AppearanceCategory,
       defaultValue: "To: ",
-      description: 'Text to be displayed infront of source node.',
+      description: 'Text to be displayed infront of target node.',
     })
     .addSelect({
       path: 'scale',

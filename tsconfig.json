@@ -1,3 +1,14 @@
 {
-  "extends": "./.config/tsconfig.json"
+  "extends": "./.config/tsconfig.json",
+  // [refactor] Widen the program beyond the scaffold's src-only scope so the editor (and the
+  // typecheck gate) also cover `playwright.config.ts` and the e2e/unit tests in "test files".
+  // Without this they showed "file is not part of the project" editor errors, and the moved test
+  // files weren't type-checked. rootDir is relaxed to "." because these files live outside ./src.
+  // `webpack.config.ts` is intentionally NOT included: it extends the scaffold's `.config/webpack`
+  // config, which uses `.ts` import extensions (compiled by its own ts-node), and pulling that
+  // chain into the strict tsc program produces unrelated scaffold errors.
+  "compilerOptions": {
+    "rootDir": "."
+  },
+  "include": ["src", ".config/types", "test files", "playwright.config.ts"]
 }

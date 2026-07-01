@@ -1,5 +1,8 @@
 import { PanelPlugin } from '@grafana/data';
-import { plugin } from './module';
+// [refactor] Relative path updated after this test moved out of src/ into "test files/".
+// (The other tests in this folder import the code under test via bare specifiers, which still
+// resolve through Jest's `modulePaths: ['<rootDir>/src']` setting.)
+import { plugin } from '../src/module';
 
 describe('plugin', () => {
   it('is registered as a PanelPlugin', () => {

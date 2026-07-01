@@ -66,11 +66,11 @@ describe('idToName', () => {
       { id: 0, name: 'A' },
       { id: 1, name: 'B' },
     ];
-    expect(idToName(1, nodes)).toBe('B');
+    expect(idToName(1, nodes as any)).toBe('B');
   });
   it('returns an empty string instead of throwing for an unmatched id (regression)', () => {
-    expect(() => idToName(99, [{ id: 0, name: 'A' }])).not.toThrow();
-    expect(idToName(99, [{ id: 0, name: 'A' }])).toBe('');
+    expect(() => idToName(99, [{ id: 0, name: 'A' }] as any)).not.toThrow();
+    expect(idToName(99, [{ id: 0, name: 'A' }] as any)).toBe('');
   });
 });
 
@@ -81,9 +81,9 @@ describe('getNodeTargets', () => {
       { source: 0, target: 2 },
       { source: 1, target: 2 },
     ];
-    expect(getNodeTargets({ id: 0, links })).toEqual([1, 2]);
-    expect(getNodeTargets({ id: 1, links })).toEqual([2]);
-    expect(getNodeTargets({ id: 2, links })).toEqual([]);
+    expect(getNodeTargets({ id: 0, links: links as any })).toEqual([1, 2]);
+    expect(getNodeTargets({ id: 1, links: links as any })).toEqual([2]);
+    expect(getNodeTargets({ id: 2, links: links as any })).toEqual([]);
   });
 });
 
@@ -133,7 +133,7 @@ describe('calcNodeRadius', () => {
 describe('isTimeSeries', () => {
   it('returns false for plain categorical data', () => {
     const data = { series: [{ fields: [{ type: 'string' }, { type: 'number' }] }] };
-    expect(isTimeSeries(data)).toBe(false);
+    expect(isTimeSeries(data as any)).toBe(false);
   });
 
   it('returns true when a time field is NOT the first field (regression test)', () => {
@@ -141,7 +141,7 @@ describe('isTimeSeries', () => {
     const data = {
       series: [{ fields: [{ type: 'string' }, { type: 'string' }, { type: 'time' }] }],
     };
-    expect(isTimeSeries(data)).toBe(true);
+    expect(isTimeSeries(data as any)).toBe(true);
   });
 
   it('returns true for a date_histogram query target', () => {
@@ -149,11 +149,11 @@ describe('isTimeSeries', () => {
       request: { targets: [{ type: 'date_histogram' }] },
       series: [{ fields: [{ type: 'string' }] }],
     };
-    expect(isTimeSeries(data)).toBe(true);
+    expect(isTimeSeries(data as any)).toBe(true);
   });
 
   it('does not throw when request is undefined', () => {
     const data = { series: [{ fields: [{ type: 'string' }] }] };
-    expect(() => isTimeSeries(data)).not.toThrow();
+    expect(() => isTimeSeries(data as any)).not.toThrow();
   });
 });

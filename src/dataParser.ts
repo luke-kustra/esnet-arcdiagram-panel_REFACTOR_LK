@@ -1,7 +1,10 @@
 // [refactor] Added real types throughout this file: the signature is now
-// (data, options: SimpleOptions, theme: GrafanaTheme2): ParsedData, and the local
+// (data: PanelData, options: SimpleOptions, theme: GrafanaTheme2): ParsedData, and the local
 // `uniqueNodes`/`links`/`groups` collections are typed (were implicit `any`). Logic unchanged.
-import { GrafanaTheme2 } from '@grafana/data';
+// `allData` is `Field[]`, so the `.find(...)` callbacks infer `Field`; the `!` assertions mark
+// the spots the original code already assumed were present (a configured field exists / has a
+// display processor).
+import { GrafanaTheme2, PanelData } from '@grafana/data';
 import { calcStrokeWidth, getEvenlySpacedColors, addNodeSum, calcNodeRadius, clusterNodes, getFieldDisplayNames } from 'utils';
 import { Link, Node, ParsedData, SimpleOptions } from 'types';
 
@@ -16,30 +19,30 @@ import { Link, Node, ParsedData, SimpleOptions } from 'types';
  * @return {hexColors} colors converted to hex
  */
 
-export function parseData(data: { series: any[] }, options: SimpleOptions, theme: GrafanaTheme2): ParsedData {
+export function parseData(data: PanelData, options: SimpleOptions, theme: GrafanaTheme2): ParsedData {
 
   const allData = data.series[0].fields;
 
   // if src/dst not defined in options, take first/second group by default
   // [refactor] Bug fix: optional-chain the field lookups so a configured-but-unmatched field
   // name falls back to the default field instead of throwing on `undefined.name`.
-  const sourceString = options.src ? (allData.find((obj: { name: any; }) => obj.name === options.src)?.name ?? allData[0].name) : allData[0].name;
-  const targetString = options.dest ? (allData.find((obj: { name: any; }) => obj.name === options.dest)?.name ?? allData[1].name) : allData[1].name;
-  const sourceValues = allData.find((obj: { name: any; }) => obj.name === sourceString)?.values
-  const targetValues = allData.find((obj: { name: any; }) => obj.name === targetString)?.values
-  const arcWeightString = options.arcWeightSource ? (allData.find((obj: { name: any; }) => obj.name === options.arcWeightSource)?.name ?? allData[allData.length -1].name) : allData[allData.length -1].name
-  const arcWeightValues = allData.find((obj: { name: any; }) => obj.name === arcWeightString)?.values
+  const sourceString = options.src ? (allData.find((obj) => obj.name === options.src)?.name ?? allData[0].name) : allData[0].name;
+  const targetString = options.dest ? (allData.find((obj) => obj.name === options.dest)?.name ?? allData[1].name) : allData[1].name;
+  const sourceValues = allData.find((obj) => obj.name === sourceString)?.values
+  const targetValues = allData.find((obj) => obj.name === targetString)?.values
+  const arcWeightString = options.arcWeightSource ? (allData.find((obj) => obj.name === options.arcWeightSource)?.name ?? allData[allData.length -1].name) : allData[allData.length -1].name
+  const arcWeightValues = allData.find((obj) => obj.name === arcWeightString)?.values
 
   const fields = getFieldDisplayNames(allData, sourceString, targetString)
 
   const hexColors = {
     nodeColor: theme.visualization.getColorByName(options.nodeColor),
   }
-  
+
   /********************************** Nodes **********************************/
-  
+
     // get source and target arrays and create array of unique nodes from them
-    const uniqueNodes: Node[] = Array.from([...new Set([...sourceValues, ...targetValues])]).map((str, index) => ({
+    const uniqueNodes: Node[] = Array.from([...new Set([...sourceValues!, ...targetValues!])]).map((str, index) => ({
       id: index,
       name: str,
       sum: 0,
@@ -51,33 +54,33 @@ export function parseData(data: { series: any[] }, options: SimpleOptions, theme
   /********************************** Links **********************************/
 
     // [refactor] Stylistic: `let` -> `const` (never reassigned).
-    const srcById = sourceValues.map((name: any) => {
+    const srcById = sourceValues!.map((name: string | number) => {
       const dictionaryItem = uniqueNodes.find(item => item.name === name);
       return dictionaryItem ? dictionaryItem.id : null;
     });
 
-    const dstById = targetValues.map((name: any) => {
+    const dstById = targetValues!.map((name: string | number) => {
       const dictionaryItem = uniqueNodes.find(item => item.name === name);
       return dictionaryItem ? dictionaryItem.id : null;
     });
 
-    let links: Link[] = srcById.map((element: any, index: string | number) => ({
-      srcName: sourceValues[index],
-      dstName: targetValues[index],
+    let links: Link[] = srcById.map((element, index) => ({
+      srcName: sourceValues![index],
+      dstName: targetValues![index],
       source: element,
       target: dstById[index],
-      arcWeightValue: arcWeightValues[index],
+      arcWeightValue: arcWeightValues![index],
       strokeWidth: 0,
-      color: allData[allData.length -1].display(allData[allData.length -1].values[index]).color,
+      color: allData[allData.length -1].display!(allData[allData.length -1].values[index]).color as string,
       // for coloring the links by source, add a field with the name of the selected field
-      [options.colorConfigField]: allData.find((obj: { name: any; }) => obj.name === options.colorConfigField)?.values[index],
+      [options.colorConfigField]: allData.find((obj) => obj.name === options.colorConfigField)?.values[index],
     }));
 
       links.forEach((link: Link, index: number) => {
         fields.forEach( field => {
           Object.assign(link, {[field.field]: []})
-          link[field.field].push(allData.find((obj: { name: any; }) => obj.name === field.field)?.values[index])
-          const display = allData.find((obj: { name: any; }) => obj.name === field.field).display(allData.find((obj: { name: any; }) => obj.name === field.field)?.values[index])
+          link[field.field].push(allData.find((obj) => obj.name === field.field)?.values[index])
+          const display = allData.find((obj) => obj.name === field.field)!.display!(allData.find((obj) => obj.name === field.field)?.values[index])
           const suffix = display.suffix === undefined ? "" : display.suffix
           Object.assign(link, {[`${field.field}Display`]: [`${display.text} ${suffix}`]})
         })
@@ -89,7 +92,7 @@ export function parseData(data: { series: any[] }, options: SimpleOptions, theme
       clusterNodes(uniqueNodes, links, options, theme, allData)
     }
 
-  /********************************** Bundle overlapping links **********************************/ 
+  /********************************** Bundle overlapping links **********************************/
 
     if(allData.length > 3) {
       const uniqueLinks = links.reduce((acc: Link[], cur: Link, index: number) => {
@@ -97,20 +100,20 @@ export function parseData(data: { series: any[] }, options: SimpleOptions, theme
         if (existing) {
           fields.forEach(field => {
             // [refactor] Bug fix: optional-chain `.state.range` (a field may lack a state).
-            if(allData.find( (obj: any) => obj.name === field.field)?.state?.range !== undefined) {
+            if(allData.find((obj) => obj.name === field.field)?.state?.range !== undefined) {
               let newValue = (existing[field.field][0]) + (cur[field.field][0])
               existing[field.field] = [newValue]
-              const display = allData.find((obj: { name: any; }) => obj.name === field.field).display(newValue)
+              const display = allData.find((obj) => obj.name === field.field)!.display!(newValue)
               existing[`${field.field}Display`] = [`${display.text} ${display.suffix}`]
             } else {
               if (!existing[field.field].includes(cur[field.field])) {
-                cur[field.field].forEach((fieldEntry: any) => {
+                cur[field.field].forEach((fieldEntry: unknown) => {
                   existing[field.field].push(fieldEntry);
                 });
               }
               existing[`${field.field}Display`] = existing[field.field]
             }
-          }) 
+          })
         } else {
           const addLink = {
             srcName: cur.srcName,
@@ -126,10 +129,10 @@ export function parseData(data: { series: any[] }, options: SimpleOptions, theme
           fields.forEach(field => {
             Object.assign(addLink, {[field.field]: []})
             addLink[field.field] = cur[field.field]
-            const display = allData.find((obj: { name: any; }) => obj.name === field.field).display(cur[field.field][0])
+            const display = allData.find((obj) => obj.name === field.field)!.display!(cur[field.field][0])
             const suffix = display.suffix === undefined ? "" : display.suffix
             // [refactor] Bug fix: optional-chain `.state.range` (a field may lack a state).
-            if(allData.find( (obj: any) => obj.name === field.field)?.state?.range !== undefined) {
+            if(allData.find((obj) => obj.name === field.field)?.state?.range !== undefined) {
               Object.assign(addLink, {[`${field.field}Display`]: [`${display.text} ${suffix}`]})
             } else {
               Object.assign(addLink, {[`${field.field}Display`]: cur[field.field]})
@@ -145,7 +148,7 @@ export function parseData(data: { series: any[] }, options: SimpleOptions, theme
     addNodeSum(links, uniqueNodes)
     calcNodeRadius(uniqueNodes, links, options)
 
-  /********************************** Colors **********************************/ 
+  /********************************** Colors **********************************/
 
     // create groups for the field specified
     let groups: Array<Record<string, string>> = []
@@ -174,9 +177,9 @@ export function parseData(data: { series: any[] }, options: SimpleOptions, theme
     const linkScaleFrom = options.arcRange?.split(",").map(Number)[0],
     linkScaleTo = options.arcRange?.split(",").map(Number)[1]
 
-    const minLink = Number(Math.min(...links.map(( e: any ) => e.arcWeightValue))),
-    maxLink = Number(Math.max(...links.map(( e: any ) => e.arcWeightValue)))
-      
+    const minLink = Number(Math.min(...links.map((e) => e.arcWeightValue))),
+    maxLink = Number(Math.max(...links.map((e) => e.arcWeightValue)))
+
     links.forEach((e: Link, index: number) => {
       calcStrokeWidth(options.arcFromSource, options.scale, options.arcThickness, e, linkScaleFrom, linkScaleTo, minLink, maxLink)
       // link color by field
@@ -185,7 +188,7 @@ export function parseData(data: { series: any[] }, options: SimpleOptions, theme
         e.color = groups.find( group => group[options.colorConfigField] === linkGroup)!.color
       }
     });
-    
+
   /**********************************************************************************/
   return {uniqueNodes, links, hexColors, fields};
 }

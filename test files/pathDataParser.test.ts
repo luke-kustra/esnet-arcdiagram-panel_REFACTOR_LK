@@ -14,7 +14,7 @@ function field(name: string, values: any[], type = 'string', color = '#abcabc') 
   };
 }
 
-function buildData(fields: any[]) {
+function buildData(fields: any[]): any {
   return { series: [{ fields }] };
 }
 
