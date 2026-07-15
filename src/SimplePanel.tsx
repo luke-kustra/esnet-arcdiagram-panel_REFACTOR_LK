@@ -66,8 +66,12 @@ export const SimplePanel: React.FC<Props> = ({ options, data, width, height, id 
     if (data.series[0].fields.length < 2) {
       return <div>Requires at least a source and target field</div>;
     }
-    const source = options.src ? data.series[0].fields.find((obj) => obj.name === options.src)!.name : data.series[0].fields[0].name;
-    const target = options.dest ? data.series[0].fields.find((obj) => obj.name === options.dest)!.name : data.series[0].fields[1].name;
+    const source = options.src
+      ? data.series[0].fields.find((obj) => obj.name === options.src)?.name ?? data.series[0].fields[0].name
+      : data.series[0].fields[0].name;
+    const target = options.dest
+      ? data.series[0].fields.find((obj) => obj.name === options.dest)?.name ?? data.series[0].fields[1].name
+      : data.series[0].fields[1].name;
     // catch errors
     if (source === target) {
       return <div>Source equals target</div>;
