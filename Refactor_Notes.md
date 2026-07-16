@@ -153,6 +153,22 @@ rendered output on purpose** — the original code was broken on Grafana 13:
 
 ---
 
+## PR review fixes (boss + Copilot feedback)
+
+- **`pathField` now honored** (`pathDataParser.ts`): the parser read `allData[0]` and ignored the
+  user-selected **Data → Path** option, so the Path select did nothing and could parse the wrong
+  column. Now resolves `options.pathField` (falling back to the first field), matching the
+  src/dest handling in `dataParser.ts`. Added regression tests.
+- **Invalid nested-`<p>` tooltip fixed** (`Arc.tsx`): tooltip rows nested `<p>` inside `<p>`
+  (auto-closed by browsers → the broken formatting Katrina saw). Replaced with `<div>`/`<span>`
+  containers; content unchanged.
+- **Version aligned to `1.2.0`**: `package.json` and `CHANGELOG.md` (`plugin.json` `%VERSION%` is
+  injected from `package.json` at build).
+- **`dist/` untracked**: removed from git and added to `.gitignore` (build output).
+- **e2e now runnable without Docker**: point the suite at the local Homebrew Grafana (plugin
+  symlinked + allowed unsigned, `provisioning/` loaded via `~/.grafana-e2e-provisioning`). All 6
+  Playwright tests pass; the Docker `npm run server` path still works too.
+
 ## Known issues left / deferred
 
 - **Node 26 local dev.** Builds/tests pass, but Grafana tooling officially targets Node 20/22

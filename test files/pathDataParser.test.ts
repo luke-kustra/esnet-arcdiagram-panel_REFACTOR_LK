@@ -97,6 +97,42 @@ describe('parsePathData', () => {
     expect(result.links.length).toBe(4);
   });
 
+  it('reads the user-selected pathField even when it is not the first column', () => {
+    // weight is first, the path column ("route") is second — the parser must follow
+    // options.pathField instead of blindly using allData[0].
+    const data = buildData([
+      field('weight', [10, 20], 'number'),
+      field('route', ['A B C', 'A B D']),
+    ]);
+
+    const result = parsePathData(data, options({ pathField: 'route' }), theme);
+    expect(result.uniqueNodes.map((n) => n.name)).toEqual(['A', 'B', 'C', 'D']);
+    expect(result.links).toHaveLength(4);
+  });
+
+  it('parses the wrong column if pathField is ignored (guards the allData[0] regression)', () => {
+    // If the parser fell back to allData[0] (the numeric weight column) instead of the
+    // configured "route" field, the nodes would be the stringified weights, not A/B/C/D.
+    const data = buildData([
+      field('weight', [10, 20], 'number'),
+      field('route', ['A B C', 'A B D']),
+    ]);
+
+    const result = parsePathData(data, options({ pathField: 'route' }), theme);
+    expect(result.uniqueNodes.map((n) => n.name)).not.toEqual(['10', '20']);
+  });
+
+  it('falls back to the first field when pathField is empty (default behavior preserved)', () => {
+    const data = buildData([
+      field('route', ['A B C', 'A B D']),
+      field('weight', [10, 20], 'number'),
+    ]);
+
+    const result = parsePathData(data, options({ pathField: '' }), theme);
+    expect(result.uniqueNodes.map((n) => n.name)).toEqual(['A', 'B', 'C', 'D']);
+    expect(result.links).toHaveLength(4);
+  });
+
   it('flags the repeated A->B hop as an overlap', () => {
     const data = buildData([
       field('route', ['A B C', 'A B D']),

@@ -22,7 +22,15 @@ import { Link, Node, ParsedData, SimpleOptions } from "types";
 export function parsePathData(data: PanelData, options: SimpleOptions, theme: GrafanaTheme2): ParsedData {
 
   const allData = data.series[0].fields;
-  const paths = allData[0].values;
+
+  // [refactor] Bug fix: honor the user-selected `options.pathField` (configured in the Data ->
+  // "Path" select when hopMode is on) instead of always reading `allData[0]`. A configured-but-
+  // unmatched field name falls back to the first field, matching the src/dst fallbacks in
+  // parseData. This is what makes the "Path" option actually take effect and lets the path column
+  // sit anywhere in the query result.
+  const pathString = options.pathField ? (allData.find((obj) => obj.name === options.pathField)?.name ?? allData[0].name) : allData[0].name;
+  const pathField = allData.find((obj) => obj.name === pathString) ?? allData[0];
+  const paths = pathField.values;
 
   // [refactor] Bug fix: optional-chain the field lookup so a configured-but-unmatched weight
   // field falls back to the last field instead of throwing on `undefined.name`.
@@ -36,7 +44,7 @@ export function parsePathData(data: PanelData, options: SimpleOptions, theme: Gr
   /********************************** Nodes **********************************/
 
     // [refactor] Stylistic: `let` -> `const` (never reassigned).
-    const uniqueNodes: Node[] = Array.from([...new Set<string>(allData[0].values.join(delimiter).split(delimiter))]).map((str, index) => ({
+    const uniqueNodes: Node[] = Array.from([...new Set<string>(paths.join(delimiter).split(delimiter))]).map((str, index) => ({
       id: index,
       name: str,
       sum: 1,

@@ -56,8 +56,8 @@ function Arc(props: ArcProps) {
   // module-level singleton shared across every panel on the page).
   const [toolTip, setToolTip] = useState<ToolTipState>({
     source: "",
-    target: <p></p>,
-    field: <p></p>,
+    target: <div></div>,
+    field: <div></div>,
     pos: [0, 0]
   });
 
@@ -69,8 +69,8 @@ function Arc(props: ArcProps) {
   function updateTooltip(pos: number[], isActive: boolean, sourceId: number,  targetId?: number): void {
     const toolTip: ToolTipState = {
       source: "",
-      target: <p></p>,
-      field: <p></p>,
+      target: <div></div>,
+      field: <div></div>,
       pos
     };
 
@@ -85,10 +85,13 @@ function Arc(props: ArcProps) {
                         .filter((value, index, array) => array.indexOf(value) === index)
                         .map((string, index) => (
                           // [refactor] Bug fix: was `props.zoom` (an undefined prop) -> tooltipFontSize
-                          <p style={styles.toolTipStyle.text(props.graphOptions.tooltipFontSize, props.textColor)} key={index}>
+                          // [refactor] Tooltip fix: <div> (block) instead of <p>; these render
+                          // inside another block below, and nesting <p> in <p> is invalid HTML
+                          // (browsers auto-close the outer <p>, breaking the tooltip layout).
+                          <div style={styles.toolTipStyle.text(props.graphOptions.tooltipFontSize, props.textColor)} key={index}>
                             {string}
                             <br />
-                          </p>
+                          </div>
                         ))
       } else if (nodeTargets.length === 1) {
         toolTip.target = idToName(nodeTargets[0], uniqueNodes)
@@ -96,26 +99,29 @@ function Arc(props: ArcProps) {
         toolTip.target = "";
       }
       if(props.graphOptions.isCluster) {
-        toolTip.field = <p><b style={styles.toolTipStyle.preface}>Cluster: </b> {uniqueNodes[sourceId].cluster}</p>
+        toolTip.field = <div><b style={styles.toolTipStyle.preface}>Cluster: </b> {uniqueNodes[sourceId].cluster}</div>
       } else {
-        toolTip.field = <p><b style={styles.toolTipStyle.preface}>Weight: </b>{uniqueNodes[sourceId].sum}</p>
+        toolTip.field = <div><b style={styles.toolTipStyle.preface}>Weight: </b>{uniqueNodes[sourceId].sum}</div>
       }
     } else {
       toolTip.source = idToName(sourceId,uniqueNodes)
       toolTip.target = idToName(targetId,uniqueNodes)
 
       const hoverLink = (links.find((item) => item.source === sourceId && item.target === targetId))
+      // [refactor] Tooltip fix: build each field block with <div>/<span> instead of nesting a
+      // <p> (the per-value lines) inside another <p> (the field row). Nested <p> is invalid HTML —
+      // the browser implicitly closes the outer <p>, which was causing the broken tooltip
+      // formatting Katrina/Copilot flagged. Same content, valid block structure.
       toolTip.field = props.parsedData.fields.map((field, index: number) => (
-                        <p key={index}><b style={styles.toolTipStyle.preface}>{field.displayName}:</b>
+                        <div key={index}><b style={styles.toolTipStyle.preface}>{field.displayName}:</b>
                         {hoverLink![`${field.field}Display`].map((string: string, index: number) => (
-                              // [refactor] Bug fix: was `props.zoom` (an undefined prop) -> tooltipFontSize
-                              <p style={styles.toolTipStyle.text(props.graphOptions.tooltipFontSize, props.textColor)} key={index}>
+                              <span style={styles.toolTipStyle.text(props.graphOptions.tooltipFontSize, props.textColor)} key={index}>
                                 {string}
                                 <br />
-                              </p>
+                              </span>
                             ))
                           }
-                        </p>
+                        </div>
                       ))
     }
 
@@ -611,11 +617,14 @@ function Arc(props: ArcProps) {
         {showTooltip && (
           <Portal>
             <VizTooltipContainer position={{ x: toolTip.pos[0], y: toolTip.pos[1] }} offset={{ x: 10, y: 10 }}>
-              <p style={styles.toolTipStyle.text(props.graphOptions.tooltipFontSize, props.textColor)} ><b style={styles.toolTipStyle.preface}>{props.graphOptions.toolTipSource}</b> {" "}{toolTip.source}</p>
+              <div style={styles.toolTipStyle.text(props.graphOptions.tooltipFontSize, props.textColor)} ><b style={styles.toolTipStyle.preface}>{props.graphOptions.toolTipSource}</b> {" "}{toolTip.source}</div>
               <br/>
               <div style={styles.toolTipStyle.text(props.graphOptions.tooltipFontSize, props.textColor)} ><b style={styles.toolTipStyle.preface}>{props.graphOptions.toolTipTarget}</b>{toolTip.target}</div>
               <br/>
-              <p style={styles.toolTipStyle.text(props.graphOptions.tooltipFontSize, props.textColor)} > {toolTip.field}</p>
+              {/* [refactor] Tooltip fix: outer container is a <div>, not a <p>. `toolTip.field`
+                  contains block elements, and wrapping them in a <p> produced invalid nested-<p>
+                  markup that the browser auto-closed, breaking the layout. */}
+              <div style={styles.toolTipStyle.text(props.graphOptions.tooltipFontSize, props.textColor)} > {toolTip.field}</div>
             </VizTooltipContainer>
           </Portal>
         )}
